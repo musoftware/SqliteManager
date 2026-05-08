@@ -1,66 +1,78 @@
 # -*- mode: python ; coding: utf-8 -*-
 """
 app.spec — PyInstaller Build Specification for SQLite Manager.
+Production-hardened for PySide6 + pandas + SQLite on Windows 10/11 x64.
+
+Key fixes vs previous version:
+  - Runtime hook adds _internal/ to DLL search path BEFORE Python/Qt loads
+  - python312.dll explicitly bundled from CPython install (not venv)
+  - VC runtime DLLs (vcruntime140.dll, ucrtbase.dll) bundled from System32
+  - Qt platform plugins (qwindows.dll) explicitly collected
+  - distutils alias conflict resolved (removed from EXCLUDES)
+  - UPX disabled (corrupts Qt/Python DLLs, triggers false-positive AV)
 
 Modes:
-  - Default (onedir): pyinstaller app.spec
-  - One-file:         pyinstaller app.spec -- --onefile
-  - Debug:            pyinstaller app.spec -- --debug
-
-Optimizations:
-  - Strips unused Qt modules
-  - Compresses binaries (UPX if available)
-  - Removes test/doc packages
-  - Tree-shakes PySide6 to essential plugins only
+  - Default (onedir):   pyinstaller app.spec
+  - One-file:           pyinstaller app.spec -- --onefile
+  - Debug:              pyinstaller app.spec -- --debug
 """
 
 import sys
 import os
+import glob
 from pathlib import Path
-from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs
+from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs, collect_all
 
-# ── Paths ─────────────────────────────────────────────────────────────────────
-ROOT = Path(SPECPATH)
-ASSETS = ROOT / "assets"
-APP_ICON = str(ASSETS / "icons" / "app.ico")
+# ── Paths ──────────────────────────────────────────────────────────────────────
+ROOT       = Path(SPECPATH)
+ASSETS     = ROOT / "assets"
+HOOKS_DIR  = ROOT / "hooks"
+APP_ICON   = str(ASSETS / "icons" / "app.ico")
 SPLASH_IMG = str(ASSETS / "splash.png")
 
-# ── Mode flags ────────────────────────────────────────────────────────────────
-ONE_FILE = "--onefile" in sys.argv
-DEBUG_MODE = "--debug" in sys.argv
-CONSOLE = DEBUG_MODE          # show console only in debug
+# ── Mode flags ─────────────────────────────────────────────────────────────────
+ONE_FILE   = "--onefile" in sys.argv
+DEBUG_MODE = "--debug"   in sys.argv
+CONSOLE    = DEBUG_MODE
 
-# ── Hidden imports ────────────────────────────────────────────────────────────
-# PySide6 modules we actually use
-PYSIDE6_MODULES = [
+# ── Collect all packages (datas + binaries + hiddenimports) ───────────────────
+# Using collect_all() is the most reliable approach for complex packages.
+# It handles DLLs, .pyd extensions, data files, and hook-generated imports.
+
+pyside6_datas, pyside6_binaries, pyside6_hiddenimports = collect_all("PySide6")
+pandas_datas,  pandas_binaries,  pandas_hiddenimports  = collect_all("pandas")
+sqlalchemy_datas, sqlalchemy_binaries, sqlalchemy_hiddenimports = collect_all("sqlalchemy")
+openpyxl_datas, openpyxl_binaries, openpyxl_hiddenimports = collect_all("openpyxl")
+
+# ── Additional hidden imports ──────────────────────────────────────────────────
+EXTRA_HIDDEN_IMPORTS = [
+    # PySide6 modules used in this app
     "PySide6.QtCore",
     "PySide6.QtGui",
     "PySide6.QtWidgets",
     "PySide6.QtSvg",
-    "PySide6.QtPrintSupport",
     "PySide6.QtSvgWidgets",
+    "PySide6.QtPrintSupport",
     "PySide6.QtXml",
-]
-
-# Third-party packages requiring explicit declaration
-HIDDEN_IMPORTS = PYSIDE6_MODULES + [
-    # SQLAlchemy dialects
+    # SQLAlchemy
     "sqlalchemy.dialects.sqlite",
     "sqlalchemy.pool",
     "sqlalchemy.engine",
-    # pandas backends
-    "pandas",
-    "pandas.io.formats.excel",
+    "sqlalchemy.ext.declarative",
+    # pandas internals
     "pandas._libs.tslibs.np_datetime",
     "pandas._libs.tslibs.nattype",
     "pandas._libs.tslibs.timedeltas",
+    "pandas._libs.tslibs.offsets",
+    "pandas.io.formats.excel",
     # openpyxl
-    "openpyxl",
     "openpyxl.cell._writer",
     # reportlab
     "reportlab",
     "reportlab.lib.pagesizes",
     "reportlab.platypus",
+    "reportlab.lib.styles",
+    "reportlab.lib.enums",
     # faker
     "faker",
     "faker.providers",
@@ -75,17 +87,17 @@ HIDDEN_IMPORTS = PYSIDE6_MODULES + [
     "cryptography",
     "cryptography.fernet",
     "cryptography.hazmat.primitives",
-    # chardet
+    "cryptography.hazmat.primitives.ciphers",
+    "cryptography.hazmat.backends",
+    # misc
     "chardet",
-    # sqlparse
     "sqlparse",
-    # pygments
     "pygments",
     "pygments.lexers",
     "pygments.lexers.sql",
     "pygments.styles",
     "pygments.formatters",
-    # stdlib
+    # stdlib (some need explicit declaration for PyInstaller)
     "csv",
     "json",
     "sqlite3",
@@ -97,40 +109,137 @@ HIDDEN_IMPORTS = PYSIDE6_MODULES + [
     "tempfile",
     "shutil",
     "urllib.request",
+    "ctypes",
+    "ctypes.util",
+    "struct",
+    "platform",
 ]
 
-# ── Data files ────────────────────────────────────────────────────────────────
-DATAS = [
-    (str(ASSETS / "icons" / "app.ico"),   "assets/icons"),
-    (str(ASSETS / "icons" / "db.ico"),    "assets/icons"),
-    (str(ASSETS / "icons" / "app.png"),   "assets/icons"),
-    (str(ASSETS / "splash.png"),          "assets"),
+ALL_HIDDEN_IMPORTS = (
+    pyside6_hiddenimports
+    + pandas_hiddenimports
+    + sqlalchemy_hiddenimports
+    + openpyxl_hiddenimports
+    + EXTRA_HIDDEN_IMPORTS
+)
+
+# ── Data files ─────────────────────────────────────────────────────────────────
+APP_DATAS = [
+    (str(ASSETS / "icons" / "app.ico"), "assets/icons"),
+    (str(ASSETS / "icons" / "db.ico"),  "assets/icons"),
+    (str(ASSETS / "icons" / "app.png"), "assets/icons"),
+    (str(ASSETS / "splash.png"),        "assets"),
 ]
 
-# PySide6 Qt plugins needed for Windows
-QT_PLUGINS = [
-    "platforms",        # Windows platform
-    "styles",           # QStyle
-    "imageformats",     # PNG, ICO, SVG
-    "iconengines",      # SVG icons
-    "platformthemes",   # system theme integration
-    "printsupport",     # PDF print support (reportlab)
-]
-
-# Add Qt plugin dirs
+# Include Qt plugin directories explicitly (belt-and-suspenders alongside collect_all)
 try:
-    from PySide6 import __file__ as pyside6_init
-    pyside6_dir = Path(pyside6_init).parent
-    for plugin in QT_PLUGINS:
-        plugin_dir = pyside6_dir / "Qt" / "plugins" / plugin
-        if plugin_dir.exists():
-            DATAS.append((str(plugin_dir), f"PySide6/Qt/plugins/{plugin}"))
-except Exception as e:
-    print(f"Warning: Could not add Qt plugin {plugin}: {e}")
+    from PySide6 import __file__ as _pyside6_init
+    _pyside6_dir = Path(_pyside6_init).parent
+    _qt_plugins_src = _pyside6_dir / "plugins"   # flat layout: PySide6/plugins/
 
-# ── Exclusions (reduce size) ──────────────────────────────────────────────────
+    NEEDED_PLUGINS = [
+        "platforms",      # qwindows.dll — CRITICAL: without this Qt can't start
+        "styles",         # QWindowsVistaStyle etc.
+        "imageformats",   # PNG, ICO, SVG support
+        "iconengines",    # SVG icon engine
+        "platformthemes", # system theme
+        "printsupport",   # PDF print (reportlab integration)
+    ]
+    for _plugin in NEEDED_PLUGINS:
+        _plugin_dir = _qt_plugins_src / _plugin
+        if _plugin_dir.exists():
+            APP_DATAS.append((str(_plugin_dir), f"PySide6/plugins/{_plugin}"))
+            print(f"[spec] Qt plugin bundled: {_plugin}")
+        else:
+            print(f"[spec] WARNING: Qt plugin not found: {_plugin}")
+except Exception as _qt_err:
+    print(f"[spec] WARNING: Could not enumerate Qt plugins: {_qt_err}")
+
+ALL_DATAS = APP_DATAS + pyside6_datas + pandas_datas + sqlalchemy_datas + openpyxl_datas
+
+# ── Binary files ───────────────────────────────────────────────────────────────
+# 1. python312.dll — search CPython install (not venv, venv redirects to parent)
+_py_ver     = f"{sys.version_info.major}{sys.version_info.minor}"  # "312"
+_dll_name   = f"python{_py_ver}.dll"
+_py3_dll    = "python3.dll"
+
+_PYTHON_DLLS = []
+
+def _find_dll_in_paths(dll_name: str, search_paths: list) -> str | None:
+    """Return the first existing path for dll_name, or None."""
+    for base in search_paths:
+        candidate = os.path.normpath(os.path.join(base, dll_name))
+        if os.path.isfile(candidate):
+            return candidate
+    return None
+
+_username = os.environ.get("USERNAME", os.environ.get("USER", ""))
+_dll_search_paths = [
+    # Walk up from venv/Scripts to get the base CPython install
+    os.path.join(os.path.dirname(sys.executable), ".."),        # venv → parent
+    os.path.dirname(sys.executable),                             # python.exe dir
+    # Common CPython install locations
+    rf"C:\Users\{_username}\AppData\Local\Programs\Python\Python{_py_ver}",
+    rf"C:\Python{_py_ver}",
+    rf"C:\Program Files\Python{_py_ver}",
+    rf"C:\Program Files (x86)\Python{_py_ver}",
+    # System32 (sometimes python gets here)
+    r"C:\Windows\System32",
+]
+
+_py312_path = _find_dll_in_paths(_dll_name, _dll_search_paths)
+if _py312_path:
+    _PYTHON_DLLS.append((_py312_path, "."))
+    print(f"[spec] Bundling {_dll_name}: {_py312_path}")
+else:
+    print(f"[spec] WARNING: {_dll_name} not found — EXE may fail on machines without Python!")
+
+_py3_path = _find_dll_in_paths(_py3_dll, _dll_search_paths)
+if _py3_path:
+    _PYTHON_DLLS.append((_py3_path, "."))
+    print(f"[spec] Bundling {_py3_dll}: {_py3_path}")
+
+# 2. VC Runtime DLLs — collect from System32 (they belong next to EXE for portability)
+_VC_DLLS = []
+_system32 = r"C:\Windows\System32"
+_vc_dll_names = [
+    "vcruntime140.dll",
+    "vcruntime140_1.dll",
+    "msvcp140.dll",
+    "ucrtbase.dll",
+]
+for _vc_dll in _vc_dll_names:
+    _vc_path = os.path.join(_system32, _vc_dll)
+    if os.path.isfile(_vc_path):
+        _VC_DLLS.append((_vc_path, "."))
+        print(f"[spec] Bundling VC runtime: {_vc_dll}")
+    else:
+        print(f"[spec] NOTE: {_vc_dll} not in System32 (may be bundled by PySide6 hook)")
+
+# 3. sqlite3.dll (if separate from python DLL)
+_SQLITE_DLLS = []
+for _sq_path in _dll_search_paths:
+    _sq_dll = os.path.join(os.path.normpath(_sq_path), "DLLs", "sqlite3.dll")
+    if os.path.isfile(_sq_dll):
+        _SQLITE_DLLS.append((_sq_dll, "."))
+        print(f"[spec] Bundling sqlite3.dll: {_sq_dll}")
+        break
+
+ALL_BINARIES = (
+    _PYTHON_DLLS
+    + _VC_DLLS
+    + _SQLITE_DLLS
+    + pyside6_binaries
+    + pandas_binaries
+    + sqlalchemy_binaries
+    + openpyxl_binaries
+)
+
+# ── Exclusions ────────────────────────────────────────────────────────────────
+# IMPORTANT: Do NOT exclude distutils — PyInstaller 6.x hooks alias it internally
+# and excluding it causes "Target module already imported" ValueError.
 EXCLUDES = [
-    # Heavy unused Qt modules
+    # Unused Qt modules (reduces size significantly)
     "PySide6.Qt3DAnimation",
     "PySide6.Qt3DCore",
     "PySide6.Qt3DExtras",
@@ -165,17 +274,13 @@ EXCLUDES = [
     "PySide6.QtWebEngineCore",
     "PySide6.QtWebEngineWidgets",
     "PySide6.QtWebSockets",
-    # Unused standard library
+    # Dev tools
     "tkinter",
     "unittest",
-    "email",
-    "xml.etree",
     "test",
     "pydoc",
     "doctest",
     "lib2to3",
-    # NOTE: do NOT exclude 'distutils' — PyInstaller 6.x hooks alias it internally
-    # Unused third-party
     "matplotlib",
     "scipy",
     "sklearn",
@@ -188,46 +293,20 @@ EXCLUDES = [
     "mypy",
 ]
 
-# ── Explicitly bundle Python DLL ─────────────────────────────────────────────
-# Required so the exe works on machines without Python installed.
-# PyInstaller sometimes misses this when Python is in AppData.
-import glob, os
-
-_PYTHON_DLL_BINARIES = []
-_py_ver = f"{sys.version_info.major}{sys.version_info.minor}"  # e.g. "312"
-_dll_name = f"python{_py_ver}.dll"
-
-# Search common install locations
-_dll_search_paths = [
-    os.path.dirname(sys.executable),           # same dir as python.exe
-    os.path.join(os.path.dirname(sys.executable), ".."),
-    f"C:/Users/{os.environ.get('USERNAME','')}/AppData/Local/Programs/Python/Python{_py_ver}",
-    f"C:/Python{_py_ver}",
-    f"C:/Program Files/Python{_py_ver}",
-    f"C:/Program Files (x86)/Python{_py_ver}",
-]
-for _search in _dll_search_paths:
-    _candidate = os.path.join(os.path.normpath(_search), _dll_name)
-    if os.path.isfile(_candidate):
-        _PYTHON_DLL_BINARIES = [(_candidate, ".")]
-        print(f"[spec] Bundling Python DLL: {_candidate}")
-        break
-
-if not _PYTHON_DLL_BINARIES:
-    print(f"[spec] WARNING: Could not find {_dll_name} — exe may fail on other machines")
-
-# ── Analysis ──────────────────────────────────────────────────────────────────
+# ── Analysis ───────────────────────────────────────────────────────────────────
 block_cipher = None
 
 a = Analysis(
     ["main.py"],
     pathex=[str(ROOT)],
-    binaries=_PYTHON_DLL_BINARIES,
-    datas=DATAS,
-    hiddenimports=HIDDEN_IMPORTS,
-    hookspath=[],
+    binaries=ALL_BINARIES,
+    datas=ALL_DATAS,
+    hiddenimports=ALL_HIDDEN_IMPORTS,
+    hookspath=[str(HOOKS_DIR)] if HOOKS_DIR.exists() else [],
     hooksconfig={},
-    runtime_hooks=[],
+    runtime_hooks=[
+        str(ROOT / "hooks" / "runtime_hook_dll_path.py"),
+    ],
     excludes=EXCLUDES,
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
@@ -235,41 +314,39 @@ a = Analysis(
     noarchive=False,
 )
 
-# ── PYZ ───────────────────────────────────────────────────────────────────────
+# ── PYZ ────────────────────────────────────────────────────────────────────────
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
-# ── Splash (PyInstaller built-in splash support) ──────────────────────────────
-# Note: Splash requires Tcl/Tk on some Python builds. If it fails, build without it.
-_splash_binaries = []
-_splash_datas    = []
+# ── Splash (optional — falls back gracefully) ──────────────────────────────────
+_splash_extras = []
 try:
-    splash = Splash(
-        SPLASH_IMG,
-        binaries=a.binaries,
-        datas=a.datas,
-        text_pos=None,
-        text_size=12,
-        minify_script=True,
-    )
-    _splash_binaries = splash.binaries
-    _splash_extras   = [splash]
-except Exception as e:
-    print(f"[INFO] Built-in splash screen not available ({e}); using app's own SplashScreen widget.")
-    splash           = None
-    _splash_extras   = []
+    if Path(SPLASH_IMG).exists():
+        splash = Splash(
+            SPLASH_IMG,
+            binaries=a.binaries,
+            datas=a.datas,
+            text_pos=None,
+            text_size=12,
+            minify_script=True,
+        )
+        _splash_extras = [splash]
+        print("[spec] Built-in splash screen: enabled")
+    else:
+        print(f"[spec] Splash image not found at {SPLASH_IMG}, using app's SplashScreen widget")
+except Exception as _splash_err:
+    print(f"[spec] Built-in splash not available ({_splash_err}), using app's SplashScreen widget")
 
-# ── EXE ───────────────────────────────────────────────────────────────────────
+# ── EXE ────────────────────────────────────────────────────────────────────────
 exe = EXE(
     pyz,
     a.scripts,
     *_splash_extras,
-    _splash_binaries,
     [] if not ONE_FILE else a.binaries + a.zipfiles + a.datas,
     name="SQLiteManager",
     debug=DEBUG_MODE,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=False,          # Disabled: UPX can corrupt Python/Qt DLLs and trigger AV false positives
+    upx=False,          # NEVER use UPX: corrupts Qt/Python DLLs, triggers AV false positives
     upx_exclude=[],
     runtime_tmpdir=None,
     console=CONSOLE,
@@ -282,7 +359,7 @@ exe = EXE(
     version="installer/version_info.txt",
 )
 
-# ── COLLECT (one-dir mode only) ───────────────────────────────────────────────
+# ── COLLECT (one-dir mode only) ────────────────────────────────────────────────
 if not ONE_FILE:
     coll = COLLECT(
         exe,
@@ -290,7 +367,7 @@ if not ONE_FILE:
         a.zipfiles,
         a.datas,
         strip=False,
-        upx=True,
-        upx_exclude=exe.upx_exclude,
+        upx=False,      # UPX disabled — see above
+        upx_exclude=[],
         name="SQLiteManager",
     )

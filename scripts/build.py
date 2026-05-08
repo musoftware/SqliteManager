@@ -27,9 +27,47 @@ sys.path.insert(0, str(ROOT))
 
 from app.version import VERSION, APP_NAME
 
-# ── Python resolver: prefer .venv (3.12) over system Python (may be 3.14) ────
+# ── Python resolver: prefer .venv (CPython 3.12 pinned) ────────────────────
 _VENV_PYTHON = ROOT / ".venv" / "Scripts" / "python.exe"
-PYTHON = str(_VENV_PYTHON) if _VENV_PYTHON.exists() else PYTHON
+PYTHON = str(_VENV_PYTHON) if _VENV_PYTHON.exists() else sys.executable
+
+
+def validate_environment() -> None:
+    """Validate Python environment before building."""
+    banner("Validating build environment")
+    import struct, platform as plt
+
+    # Check architecture
+    bits = struct.calcsize("P") * 8
+    if bits != 64:
+        print(f"  [ERROR] Python must be 64-bit. Got {bits}-bit.")
+        sys.exit(1)
+    print(f"  [OK] Architecture: {bits}-bit")
+
+    # Check Python version
+    vi = sys.version_info
+    print(f"  [OK] Python {vi.major}.{vi.minor}.{vi.micro} ({sys.executable})")
+    if vi.major != 3 or vi.minor < 10:
+        print(f"  [WARN] Python 3.10+ recommended, got {vi.major}.{vi.minor}")
+
+    # Reject Microsoft Store Python
+    exe_lower = sys.executable.lower()
+    if "windowsapps" in exe_lower:
+        print("  [ERROR] Microsoft Store Python detected!")
+        print("  Install CPython 3.12 (64-bit) from: https://www.python.org/downloads/")
+        sys.exit(1)
+    print("  [OK] Python installation: CPython (not Microsoft Store)")
+
+    # Check PyInstaller
+    try:
+        result = subprocess.run([PYTHON, "-m", "PyInstaller", "--version"],
+                                capture_output=True, text=True, check=True)
+        print(f"  [OK] PyInstaller: {result.stdout.strip()}")
+    except Exception:
+        print("  [INFO] PyInstaller not found, installing...")
+        run([PYTHON, "-m", "pip", "install", "pyinstaller>=6.0", "--quiet"])
+
+    print("  [OK] Build environment validated")
 
 DIST_DIR      = ROOT / "dist"
 BUILD_DIR     = ROOT / "build"
@@ -61,20 +99,24 @@ def check_tools() -> None:
     banner("Checking build tools")
     missing = []
 
-    for tool in ["pyinstaller", "pip"]:
-        if shutil.which(tool) is None:
-            try:
-                subprocess.run([PYTHON, "-m", tool, "--version"],
-                               capture_output=True, check=True)
-            except Exception:
+    for tool in ["PyInstaller", "pip"]:
+        try:
+            result = subprocess.run(
+                [PYTHON, "-m", tool, "--version"],
+                capture_output=True, text=True, check=True
+            )
+            print(f"  [OK] {tool}: {result.stdout.strip()}")
+        except Exception:
+            # Fallback: check system PATH
+            if shutil.which(tool.lower()):
+                print(f"  [OK] {tool} (system)")
+            else:
                 missing.append(tool)
-        else:
-            print(f"  [OK] {tool}")
 
     if missing:
         print(f"\n  [WARN] Missing tools: {missing}")
         print("  Installing PyInstaller...")
-        run([PYTHON, "-m", "pip", "install", "pyinstaller", "--quiet"])
+        run([PYTHON, "-m", "pip", "install", "pyinstaller>=6.0", "--quiet"])
 
 
 def clean(full: bool = False) -> None:
@@ -141,16 +183,67 @@ def build_pyinstaller(onefile: bool = False, debug: bool = False) -> Path:
     else:
         print(f"\n  [WARN] Expected exe not found at: {exe_path}")
 
+    if not onefile:
+        _post_build_verify(exe_path.parent)
+
     return exe_path
 
 
+def _post_build_verify(dist_dir: Path) -> None:
+    """Post-build DLL verification. Warns if critical DLLs are missing."""
+    import sys as _sys
+    banner("Post-build DLL verification")
+
+    _internal = dist_dir / "_internal"
+    py_ver = f"{_sys.version_info.major}{_sys.version_info.minor}"
+
+    critical_checks = [
+        # (search_dir, dll_name, description)
+        (_internal,                                             f"python{py_ver}.dll", "Python runtime"),
+        (_internal,                                             "vcruntime140.dll",    "VC Runtime 140"),
+        (_internal / "PySide6" / "plugins" / "platforms",      "qwindows.dll",        "Qt Windows platform"),
+        (_internal,                                             "python3.dll",         "Python3 stub DLL"),
+    ]
+
+    all_ok = True
+    for search_dir, dll_name, desc in critical_checks:
+        dll_path = search_dir / dll_name
+        # Also search recursively in _internal for this dll
+        found = list(dist_dir.rglob(dll_name)) if not dll_path.exists() else [dll_path]
+        if found:
+            print(f"  [OK] {desc} ({dll_name}): {found[0]}")
+        else:
+            print(f"  [WARN] {desc} ({dll_name}): NOT FOUND in dist!")
+            all_ok = False
+
+    # Belt-and-suspenders: copy python312.dll next to the EXE if it's only in _internal
+    py_dll_name = f"python{py_ver}.dll"
+    py_dll_root = dist_dir / py_dll_name
+    py_dll_internal = _internal / py_dll_name
+    if not py_dll_root.exists() and py_dll_internal.exists():
+        try:
+            shutil.copy2(py_dll_internal, py_dll_root)
+            print(f"  [FIX] Copied {py_dll_name} to dist root (bootloader DLL fix)")
+        except Exception as e:
+            print(f"  [WARN] Could not copy {py_dll_name} to root: {e}")
+
+    if all_ok:
+        print("\n  All critical DLLs verified.")
+    else:
+        print("\n  WARNING: Some DLLs missing. EXE may fail on machines without Python!")
+        print("  Check antivirus exclusions and re-run build if needed.")
+
+
 def build_nuitka() -> None:
-    banner("Building with Nuitka (optimized)")
+    banner("Building with Nuitka (optimized standalone)")
+    # NOTE: --standalone is used instead of --onefile to avoid extraction issues.
+    # --onefile in Nuitka extracts to a temp dir (similar to PyInstaller onefile)
+    # which can be flagged by antivirus. Use --standalone for production.
     cmd = [
         PYTHON, "-m", "nuitka",
         "--standalone",
-        "--onefile",
         "--enable-plugin=pyside6",
+        "--enable-plugin=numpy",
         "--windows-disable-console",
         f"--windows-icon-from-ico={ICON}",
         f"--output-dir={DIST_DIR}",
@@ -160,6 +253,17 @@ def build_nuitka() -> None:
         f"--product-version={VERSION}",
         "--copyright=Copyright 2025 SQLite Manager Team",
         "--assume-yes-for-downloads",
+        # Include data files
+        f"--include-data-dir={ASSETS_DIR}=assets",
+        # Packages to include
+        "--include-package=sqlalchemy",
+        "--include-package=pandas",
+        "--include-package=openpyxl",
+        "--include-package=faker",
+        "--include-package=reportlab",
+        "--include-package=cryptography",
+        "--include-package=pygments",
+        "--include-package=sqlparse",
         "main.py",
     ]
     run(cmd)
@@ -287,6 +391,7 @@ def main() -> None:
     parser.add_argument("--sign-pass", type=str, default="",  help="Certificate password")
     args = parser.parse_args()
 
+    validate_environment()
     check_tools()
 
     if args.clean:

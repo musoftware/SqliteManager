@@ -23,6 +23,24 @@ def _bootstrap_dirs() -> None:
 
 _bootstrap_dirs()
 
+# ── Startup Diagnostics: MUST run before any PySide6/Qt import ───────────────
+# Validates Python env, DLLs, VC runtime, Qt paths, and logs environment report.
+# Shows user-friendly native Windows error dialogs on failure (no Qt required).
+try:
+    from utils.startup_diagnostics import run_startup_diagnostics
+    run_startup_diagnostics()
+except SystemExit:
+    raise
+except Exception as _diag_err:
+    # Non-fatal: don't block startup if diagnostics itself has an import error
+    import traceback
+    _diag_log = Path(os.getenv("APPDATA", str(Path.home()))) / "SQLiteManager" / "logs" / "startup.log"
+    try:
+        with open(_diag_log, "a") as _f:
+            _f.write(f"[WARN] startup_diagnostics failed: {_diag_err}\n{traceback.format_exc()}\n")
+    except Exception:
+        pass
+
 # ── PyInstaller resource path helper ─────────────────────────────────────────
 def resource_path(relative: str) -> str:
     """Get absolute path to a resource — works in dev and PyInstaller bundle."""

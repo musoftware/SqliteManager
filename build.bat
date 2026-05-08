@@ -1,9 +1,10 @@
 @echo off
 REM ============================================================
 REM  build.bat — SQLite Manager Windows Build Script
+REM
 REM  Usage:
 REM    build.bat              -> Production one-dir build
-REM    build.bat onefile      -> Single .exe
+REM    build.bat onefile      -> Single .exe (less portable)
 REM    build.bat debug        -> Debug build (console visible)
 REM    build.bat portable     -> Build + create portable ZIP
 REM    build.bat installer    -> Build + run Inno Setup
@@ -21,76 +22,94 @@ echo   SQLite Manager Build System
 echo  ============================================================
 echo.
 
-REM -- Python check: prefer .venv (Python 3.12) to avoid 3.14 bootloader issues
-set PYTHON=python
-if exist ".venv\Scripts\python.exe" set PYTHON=.venv\Scripts\python.exe
+REM ── Prefer .venv Python (CPython 3.12 pinned) ────────────────────────────────
+set "PYTHON=.venv\Scripts\python.exe"
+if not exist "%PYTHON%" (
+    echo  [WARN] .venv not found. Run: py -3.12 -m venv .venv ^&^& .venv\Scripts\pip install -r requirements.txt
+    echo  Falling back to system Python...
+    set "PYTHON=python"
+)
 
+REM ── Validate Python is available ─────────────────────────────────────────────
 %PYTHON% --version >nul 2>&1
 if %ERRORLEVEL% NEQ 0 (
-    echo  [ERROR] Python not found. Create venv: py -3.12 -m venv .venv
+    echo  [ERROR] Python not found!
+    echo  Create venv: py -3.12 -m venv .venv
     pause
     exit /b 1
 )
+
+REM ── Reject Microsoft Store Python ────────────────────────────────────────────
+%PYTHON% -c "import sys; path=sys.executable.lower(); exit(1 if 'windowsapps' in path else 0)" >nul 2>&1
+if %ERRORLEVEL% NEQ 0 (
+    echo  [ERROR] Microsoft Store Python detected!
+    echo  Install CPython 3.12 from: https://www.python.org/downloads/
+    echo  Then recreate venv: py -3.12 -m venv .venv
+    pause
+    exit /b 1
+)
+
+REM ── Show Python version ───────────────────────────────────────────────────────
 for /f "tokens=*" %%v in ('%PYTHON% --version 2^>^&1') do echo  Python: %%v
 
-REM -- Parse argument
+REM ── Parse argument ────────────────────────────────────────────────────────────
 set "MODE=%~1"
 if "%MODE%"=="" set "MODE=build"
 
-if /i "%MODE%"=="clean" goto :do_clean
-if /i "%MODE%"=="onefile" goto :do_onefile
-if /i "%MODE%"=="debug" goto :do_debug
-if /i "%MODE%"=="portable" goto :do_portable
+if /i "%MODE%"=="clean"     goto :do_clean
+if /i "%MODE%"=="onefile"   goto :do_onefile
+if /i "%MODE%"=="debug"     goto :do_debug
+if /i "%MODE%"=="portable"  goto :do_portable
 if /i "%MODE%"=="installer" goto :do_installer
-if /i "%MODE%"=="all" goto :do_all
-if /i "%MODE%"=="nuitka" goto :do_nuitka
+if /i "%MODE%"=="all"       goto :do_all
+if /i "%MODE%"=="nuitka"    goto :do_nuitka
 goto :do_build
 
 :do_clean
 echo  [Clean] Removing build artifacts...
-python scripts\clean.py --full
+%PYTHON% scripts\clean.py --full
 goto :done
 
 :do_build
 echo  [Build] Production one-dir build...
-python scripts\build.py
+%PYTHON% scripts\build.py
 goto :done
 
 :do_onefile
 echo  [Build] Single-file executable...
-python scripts\build.py --onefile
+%PYTHON% scripts\build.py --onefile
 goto :done
 
 :do_debug
 echo  [Build] Debug build with console...
-python scripts\build.py --debug
+%PYTHON% scripts\build.py --debug
 goto :done
 
 :do_portable
 echo  [Build] Production + Portable ZIP...
-python scripts\build.py --portable
+%PYTHON% scripts\build.py --portable
 goto :done
 
 :do_installer
 echo  [Build] Production + Inno Setup Installer...
-python scripts\build.py --installer
+%PYTHON% scripts\build.py --installer
 goto :done
 
 :do_all
 echo  [Build] Full release pipeline...
-python scripts\build.py --all
+%PYTHON% scripts\build.py --all
 goto :done
 
 :do_nuitka
 echo  [Build] Nuitka optimized build...
-python -m pip install nuitka --quiet
-python scripts\build.py --nuitka
+%PYTHON% -m pip install nuitka --quiet
+%PYTHON% scripts\build.py --nuitka
 goto :done
 
 :done
 echo.
 if %ERRORLEVEL% EQU 0 (
-    echo  [SUCCESS] Build completed successfully!
+    echo  [SUCCESS] Build completed successfully
     echo  Output: dist\
 ) else (
     echo  [FAILED] Build failed with exit code %ERRORLEVEL%
