@@ -25,7 +25,6 @@ def create_demo_database(path: str | None = None) -> str:
     log.info("Creating demo database: %s", db_path)
 
     conn = sqlite3.connect(db_path)
-    conn.execute("PRAGMA foreign_keys = ON;")
     conn.execute("PRAGMA journal_mode = WAL;")
 
     # ── Schema ────────────────────────────────────────────────────────────────
@@ -98,6 +97,17 @@ def create_demo_database(path: str | None = None) -> str:
     """)
 
     # ── Seed data ─────────────────────────────────────────────────────────────
+    # Clear tables to ensure clean re-seed
+    conn.executescript("""
+        DELETE FROM order_items;
+        DELETE FROM orders;
+        DELETE FROM products;
+        DELETE FROM users;
+        DELETE FROM categories;
+        DELETE FROM sqlite_sequence WHERE name IN
+            ('categories','users','products','orders','order_items');
+    """)
+
     categories = [
         ("Electronics", "electronics"),
         ("Clothing", "clothing"),
@@ -164,17 +174,20 @@ def create_demo_database(path: str | None = None) -> str:
         products,
     )
 
-    # Orders + items
+    # Orders + items — use real IDs from DB
     statuses = ["pending", "confirmed", "shipped", "delivered", "cancelled"]
     status_weights = [0.1, 0.15, 0.2, 0.45, 0.1]
-    product_ids = [r[0] for r in conn.execute("SELECT id, price FROM products;").fetchall()]
     product_prices = {r[0]: r[1] for r in conn.execute("SELECT id, price FROM products;").fetchall()}
-    user_count = conn.execute("SELECT COUNT(*) FROM users;").fetchone()[0]
+    actual_user_ids = [r[0] for r in conn.execute("SELECT id FROM users;").fetchall()]
+    if not actual_user_ids:
+        conn.commit()
+        conn.close()
+        return db_path
 
     orders = []
     order_items = []
     for _ in range(500):
-        user_id = random.randint(1, user_count)
+        user_id = random.choice(actual_user_ids)
         status = random.choices(statuses, weights=status_weights)[0]
         days_ago = random.randint(0, 365)
         created = (datetime.now() - timedelta(days=days_ago)).strftime("%Y-%m-%d %H:%M:%S")

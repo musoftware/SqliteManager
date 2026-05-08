@@ -1,0 +1,190 @@
+name: Build and Release SQLite Manager
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'      # Trigger on version tags: v1.0.0, v1.2.3
+  workflow_dispatch:  # Allow manual trigger
+    inputs:
+      mode:
+        description: 'Build mode (build/onefile/portable/all)'
+        required: true
+        default: 'all'
+        type: choice
+        options: ['build', 'onefile', 'portable', 'all']
+
+permissions:
+  contents: write    # Allow uploading release assets
+
+env:
+  PYTHON_VERSION: '3.12'
+  APP_NAME: 'SQLiteManager'
+
+jobs:
+  # ── Build Job ──────────────────────────────────────────────────────────────
+  build:
+    name: Build Windows Executable
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0      # Need full history for changelog
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+
+      - name: Cache PyInstaller
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/pip
+            build/
+          key: pyinstaller-${{ runner.os }}-${{ hashFiles('requirements.txt') }}
+          restore-keys: |
+            pyinstaller-${{ runner.os }}-
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Read version
+        id: version
+        run: |
+          $ver = python -c "from app.version import VERSION; print(VERSION)"
+          echo "VERSION=$ver" >> $env:GITHUB_OUTPUT
+          echo "Building version: $ver"
+
+      - name: Run verification suite
+        env:
+          PYTHONIOENCODING: utf-8
+        run: python verify.py
+
+      - name: Build one-dir executable
+        env:
+          PYTHONIOENCODING: utf-8
+        run: python scripts/build.py
+        # One-dir is better for AV compatibility
+
+      - name: Build portable ZIP
+        env:
+          PYTHONIOENCODING: utf-8
+        run: python scripts/build.py --portable
+
+      - name: Build one-file executable
+        env:
+          PYTHONIOENCODING: utf-8
+        run: python scripts/build.py --onefile
+
+      - name: List build output
+        run: |
+          echo "=== dist/ ==="
+          Get-ChildItem dist -Recurse -File | Select-Object FullName, @{N="Size(MB)";E={[math]::Round($_.Length/1MB,1)}}
+          echo ""
+          echo "=== releases/ ==="
+          if (Test-Path releases) {
+            Get-ChildItem releases -File | Select-Object Name, @{N="Size(MB)";E={[math]::Round($_.Length/1MB,1)}}
+          }
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: SQLiteManager-${{ steps.version.outputs.VERSION }}-Windows
+          path: |
+            dist/SQLiteManager/
+            releases/*.zip
+            releases/*.exe
+          retention-days: 30
+          if-no-files-found: warn
+
+  # ── Release Job (only on tags) ────────────────────────────────────────────
+  release:
+    name: Create GitHub Release
+    needs: build
+    runs-on: windows-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Read version from tag
+        id: tag_version
+        run: |
+          $tag = "${{ github.ref_name }}"
+          echo "TAG=$tag" >> $env:GITHUB_OUTPUT
+          $ver = $tag.TrimStart("v")
+          echo "VERSION=$ver" >> $env:GITHUB_OUTPUT
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: SQLiteManager-${{ steps.tag_version.outputs.VERSION }}-Windows
+          path: ./release-artifacts
+
+      - name: Generate changelog
+        id: changelog
+        run: |
+          # Get commits since last tag
+          $prevTag = git describe --tags --abbrev=0 HEAD^ 2>$null
+          if ($prevTag) {
+            $changes = git log --oneline --no-merges "$prevTag..HEAD" | ForEach-Object { "- $_" }
+          } else {
+            $changes = @("- Initial release")
+          }
+          $body = "## What's New in ${{ steps.tag_version.outputs.TAG }}`n`n" + ($changes -join "`n")
+          $body += "`n`n## Downloads`n- **Installer**: `SQLiteManagerSetup_${{ steps.tag_version.outputs.VERSION }}.exe`"
+          $body += "`n- **Portable**: `SQLiteManager_v${{ steps.tag_version.outputs.VERSION }}_Portable.zip`"
+          $body += "`n`n## System Requirements`n- Windows 10/11 (64-bit)`n- No Python installation required"
+          $body | Out-File -FilePath changelog.md -Encoding utf8
+          echo "Generated changelog"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag_version.outputs.TAG }}
+          name: SQLite Manager ${{ steps.tag_version.outputs.TAG }}
+          body_path: changelog.md
+          draft: false
+          prerelease: ${{ contains(steps.tag_version.outputs.TAG, 'beta') || contains(steps.tag_version.outputs.TAG, 'alpha') || contains(steps.tag_version.outputs.TAG, 'rc') }}
+          files: |
+            release-artifacts/**/*.exe
+            release-artifacts/**/*.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ── Nightly Build (scheduled) ────────────────────────────────────────────
+  nightly:
+    name: Nightly Build
+    runs-on: windows-latest
+    if: github.event_name == 'schedule'
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - run: pip install -r requirements.txt pyinstaller
+      - run: python scripts/build.py --onefile
+        env:
+          PYTHONIOENCODING: utf-8
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SQLiteManager-nightly-${{ github.run_number }}
+          path: dist/*.exe
+          retention-days: 7

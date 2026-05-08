@@ -197,6 +197,8 @@ class MainWindow(QMainWindow):
         help_menu.addAction("⌨ Keyboard Shortcuts", self._on_shortcuts)
         help_menu.addSeparator()
         help_menu.addAction("🎮 Open Demo Database", self._on_open_demo)
+        help_menu.addSeparator()
+        help_menu.addAction("🔄 Check for Updates…", self._on_check_updates)
 
     def _setup_toolbar(self) -> None:
         tb = QToolBar("Main Toolbar")
@@ -687,6 +689,47 @@ class MainWindow(QMainWindow):
         dlg.setWindowTitle("Keyboard Shortcuts")
         dlg.setText(shortcuts)
         dlg.exec()
+
+    def _on_check_updates(self) -> None:
+        """Manual update check — shows a dialog with result."""
+        from PySide6.QtWidgets import QProgressDialog
+        from services.updater_service import UpdaterService, ReleaseInfo
+
+        progress = QProgressDialog("Checking for updates…", "Cancel", 0, 0, self)
+        progress.setWindowTitle("Check for Updates")
+        progress.setWindowModality(Qt.WindowModal)
+        progress.show()
+
+        self._update_svc = UpdaterService(self)
+
+        def on_found(release: ReleaseInfo) -> None:
+            progress.close()
+            reply = QMessageBox.question(
+                self,
+                "Update Available",
+                f"<b>v{release.version}</b> is available!<br><br>"
+                f"<b>Release Notes:</b><br>{release.body[:500]}…<br><br>"
+                "Download and install now?",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.Yes,
+            )
+            if reply == QMessageBox.Yes:
+                import webbrowser
+                webbrowser.open(release.browser_url)
+
+        def on_no_update() -> None:
+            progress.close()
+            QMessageBox.information(self, "No Updates", f"You are running the latest version (v{APP_VERSION}).")
+
+        def on_failed(msg: str) -> None:
+            progress.close()
+            QMessageBox.warning(self, "Update Check Failed",
+                                f"Could not check for updates:\n{msg}\n\nCheck your internet connection.")
+
+        self._update_svc.update_available.connect(on_found)
+        self._update_svc.no_update.connect(on_no_update)
+        self._update_svc.check_failed.connect(on_failed)
+        self._update_svc.check(silent=False)
 
     # ── State persistence ─────────────────────────────────────────────────────
 
