@@ -9,6 +9,8 @@ Provides a QStandardItemModel tree with:
 """
 from __future__ import annotations
 
+from typing import Optional
+
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QStandardItem, QStandardItemModel, QIcon, QFont, QColor
 
@@ -25,7 +27,6 @@ ROLE_PARENT_TABLE = Qt.UserRole + 3  # parent table name for columns
 
 
 def _make_item(text: str, bold: bool = False, color: Optional[str] = None) -> QStandardItem:
-    from typing import Optional
     item = QStandardItem(text)
     item.setEditable(False)
     if bold:

@@ -177,15 +177,26 @@ class MainWindow(QMainWindow):
         tools_menu.addAction("📊 ANALYZE Database", self._on_analyze)
         tools_menu.addSeparator()
         tools_menu.addAction("📋 Database Statistics", self._on_db_stats)
+        tools_menu.addAction("📈 Column Statistics…", self._on_column_stats)
+        tools_menu.addAction("⚡ Mass Update…", self._on_mass_update)
         tools_menu.addSeparator()
         self._act_autobackup = tools_menu.addAction("🔄 Auto-Backup: OFF")
         self._act_autobackup.setCheckable(True)
         self._act_autobackup.toggled.connect(self._on_autobackup_toggle)
 
+        # Schema
+        schema_menu = mb.addMenu("&Schema")
+        schema_menu.addAction("➕ Create Table…", self._on_create_table, "Ctrl+Shift+T")
+        schema_menu.addAction("📋 Table Structure…", self._on_table_structure)
+        schema_menu.addSeparator()
+        schema_menu.addAction("↺ Refresh Schema", self._on_refresh_schema, "F5")
+
         # Help
         help_menu = mb.addMenu("&Help")
         help_menu.addAction("📖 About SQLite Manager", self._on_about)
         help_menu.addAction("⌨ Keyboard Shortcuts", self._on_shortcuts)
+        help_menu.addSeparator()
+        help_menu.addAction("🎮 Open Demo Database", self._on_open_demo)
 
     def _setup_toolbar(self) -> None:
         tb = QToolBar("Main Toolbar")
@@ -248,15 +259,20 @@ class MainWindow(QMainWindow):
         sub.setAlignment(Qt.AlignCenter)
 
         btn_open = QPushButton("📂  Open Database…")
-        btn_open.setFixedWidth(220)
-        btn_open.setFixedHeight(40)
+        btn_open.setFixedWidth(240)
+        btn_open.setFixedHeight(42)
         btn_open.setProperty("class", "primary")
         btn_open.clicked.connect(self._on_open_db)
 
         btn_new = QPushButton("✨  Create New Database…")
-        btn_new.setFixedWidth(220)
-        btn_new.setFixedHeight(40)
+        btn_new.setFixedWidth(240)
+        btn_new.setFixedHeight(42)
         btn_new.clicked.connect(self._on_new_db)
+
+        btn_demo = QPushButton("🎮  Open Demo Database")
+        btn_demo.setFixedWidth(240)
+        btn_demo.setFixedHeight(42)
+        btn_demo.clicked.connect(self._on_open_demo)
 
         version_lbl = QLabel(f"<small style='color:#7f849c'>v{APP_VERSION}</small>")
         version_lbl.setAlignment(Qt.AlignCenter)
@@ -267,6 +283,7 @@ class MainWindow(QMainWindow):
         layout.addSpacing(20)
         layout.addWidget(btn_open, alignment=Qt.AlignCenter)
         layout.addWidget(btn_new, alignment=Qt.AlignCenter)
+        layout.addWidget(btn_demo, alignment=Qt.AlignCenter)
         layout.addStretch()
         layout.addWidget(version_lbl)
         return w
@@ -494,6 +511,82 @@ class MainWindow(QMainWindow):
         stats = intro.get_database_stats()
         lines = "\n".join(f"  {k}: {v}" for k, v in stats.items())
         QMessageBox.information(self, f"Database Statistics — {tab.conn.name}", lines)
+
+    def _on_column_stats(self) -> None:
+        tab = self._current_db_tab()
+        if not tab:
+            QMessageBox.information(self, "No Database", "Open a database first.")
+            return
+        from core.database.introspector import SchemaIntrospector
+        intro = SchemaIntrospector(tab.conn.connection)
+        tables = intro.get_tables() + intro.get_views()
+        if not tables:
+            QMessageBox.information(self, "No Tables", "No tables found.")
+            return
+        table, ok = QInputDialog.getItem(self, "Column Statistics", "Select table:", tables, 0, False)
+        if ok:
+            from widgets.column_stats_dialog import ColumnStatsDialog
+            dlg = ColumnStatsDialog(tab.conn, table, self)
+            dlg.exec()
+
+    def _on_mass_update(self) -> None:
+        tab = self._current_db_tab()
+        if not tab:
+            QMessageBox.information(self, "No Database", "Open a database first.")
+            return
+        if tab.conn.read_only:
+            QMessageBox.warning(self, "Read-Only", "Cannot update a read-only database.")
+            return
+        from widgets.mass_update_dialog import MassUpdateDialog
+        dlg = MassUpdateDialog(tab.conn, parent=self)
+        if dlg.exec() == QDialog.Accepted:
+            self._status_bar.show_success("Mass update completed.")
+
+    def _on_create_table(self) -> None:
+        tab = self._current_db_tab()
+        if not tab:
+            QMessageBox.information(self, "No Database", "Open a database first.")
+            return
+        if tab.conn.read_only:
+            QMessageBox.warning(self, "Read-Only", "Cannot create tables in read-only mode.")
+            return
+        from widgets.create_table_dialog import CreateTableDialog
+        dlg = CreateTableDialog(tab.conn, self)
+        if dlg.exec() == QDialog.Accepted:
+            self._explorer.reload()
+            self._status_bar.show_success("Table created.")
+
+    def _on_table_structure(self) -> None:
+        tab = self._current_db_tab()
+        if not tab:
+            QMessageBox.information(self, "No Database", "Open a database first.")
+            return
+        from core.database.introspector import SchemaIntrospector
+        intro = SchemaIntrospector(tab.conn.connection)
+        tables = intro.get_tables() + intro.get_views()
+        if not tables:
+            QMessageBox.information(self, "No Tables", "No tables found.")
+            return
+        table, ok = QInputDialog.getItem(self, "Table Structure", "Select table:", tables, 0, False)
+        if ok:
+            from widgets.table_structure_dialog import TableStructureDialog
+            dlg = TableStructureDialog(tab.conn, table, self)
+            if dlg.exec() == QDialog.Accepted:
+                self._explorer.reload()
+
+    def _on_open_demo(self) -> None:
+        from utils.demo_database import create_demo_database, DEMO_DB_PATH
+        try:
+            if not DEMO_DB_PATH.exists():
+                self._status_bar.show_message("Creating demo database…")
+                QApplication.processEvents()
+                path = create_demo_database()
+            else:
+                path = str(DEMO_DB_PATH)
+            self._open_database(path)
+            self._status_bar.show_success("Demo database opened! Try the Schema Explorer.")
+        except Exception as exc:
+            QMessageBox.critical(self, "Demo Error", str(exc))
 
     def _on_autobackup_toggle(self, checked: bool) -> None:
         if checked:

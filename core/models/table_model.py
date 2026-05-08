@@ -13,9 +13,8 @@ from PySide6.QtCore import (
     QModelIndex,
     Qt,
     Signal,
-    QUndoStack,
-    QUndoCommand,
 )
+from PySide6.QtGui import QUndoStack, QUndoCommand
 from PySide6.QtGui import QColor, QFont
 
 from app.config import DEFAULT_PAGE_SIZE, EDITOR_FONT_FAMILY
