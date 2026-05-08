@@ -174,7 +174,7 @@ EXCLUDES = [
     "pydoc",
     "doctest",
     "lib2to3",
-    "distutils",
+    # NOTE: do NOT exclude 'distutils' — PyInstaller 6.x hooks alias it internally
     # Unused third-party
     "matplotlib",
     "scipy",
@@ -188,13 +188,41 @@ EXCLUDES = [
     "mypy",
 ]
 
+# ── Explicitly bundle Python DLL ─────────────────────────────────────────────
+# Required so the exe works on machines without Python installed.
+# PyInstaller sometimes misses this when Python is in AppData.
+import glob, os
+
+_PYTHON_DLL_BINARIES = []
+_py_ver = f"{sys.version_info.major}{sys.version_info.minor}"  # e.g. "312"
+_dll_name = f"python{_py_ver}.dll"
+
+# Search common install locations
+_dll_search_paths = [
+    os.path.dirname(sys.executable),           # same dir as python.exe
+    os.path.join(os.path.dirname(sys.executable), ".."),
+    f"C:/Users/{os.environ.get('USERNAME','')}/AppData/Local/Programs/Python/Python{_py_ver}",
+    f"C:/Python{_py_ver}",
+    f"C:/Program Files/Python{_py_ver}",
+    f"C:/Program Files (x86)/Python{_py_ver}",
+]
+for _search in _dll_search_paths:
+    _candidate = os.path.join(os.path.normpath(_search), _dll_name)
+    if os.path.isfile(_candidate):
+        _PYTHON_DLL_BINARIES = [(_candidate, ".")]
+        print(f"[spec] Bundling Python DLL: {_candidate}")
+        break
+
+if not _PYTHON_DLL_BINARIES:
+    print(f"[spec] WARNING: Could not find {_dll_name} — exe may fail on other machines")
+
 # ── Analysis ──────────────────────────────────────────────────────────────────
 block_cipher = None
 
 a = Analysis(
     ["main.py"],
     pathex=[str(ROOT)],
-    binaries=[],
+    binaries=_PYTHON_DLL_BINARIES,
     datas=DATAS,
     hiddenimports=HIDDEN_IMPORTS,
     hookspath=[],
@@ -207,38 +235,42 @@ a = Analysis(
     noarchive=False,
 )
 
-# ── Splash (PyInstaller built-in splash support) ──────────────────────────────
-splash = Splash(
-    SPLASH_IMG,
-    binaries=a.binaries,
-    datas=a.datas,
-    text_pos=None,          # We draw our own text in SplashScreen widget
-    text_size=12,
-    minify_script=True,
-)
-
 # ── PYZ ───────────────────────────────────────────────────────────────────────
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
+
+# ── Splash (PyInstaller built-in splash support) ──────────────────────────────
+# Note: Splash requires Tcl/Tk on some Python builds. If it fails, build without it.
+_splash_binaries = []
+_splash_datas    = []
+try:
+    splash = Splash(
+        SPLASH_IMG,
+        binaries=a.binaries,
+        datas=a.datas,
+        text_pos=None,
+        text_size=12,
+        minify_script=True,
+    )
+    _splash_binaries = splash.binaries
+    _splash_extras   = [splash]
+except Exception as e:
+    print(f"[INFO] Built-in splash screen not available ({e}); using app's own SplashScreen widget.")
+    splash           = None
+    _splash_extras   = []
 
 # ── EXE ───────────────────────────────────────────────────────────────────────
 exe = EXE(
     pyz,
     a.scripts,
-    splash,
-    splash.binaries,
+    *_splash_extras,
+    _splash_binaries,
     [] if not ONE_FILE else a.binaries + a.zipfiles + a.datas,
     name="SQLiteManager",
     debug=DEBUG_MODE,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,                       # Compress with UPX if available
-    upx_exclude=[
-        "vcruntime140.dll",
-        "python3*.dll",
-        "Qt6Core.dll",
-        "Qt6Gui.dll",
-        "Qt6Widgets.dll",
-    ],
+    upx=False,          # Disabled: UPX can corrupt Python/Qt DLLs and trigger AV false positives
+    upx_exclude=[],
     runtime_tmpdir=None,
     console=CONSOLE,
     disable_windowed_traceback=False,

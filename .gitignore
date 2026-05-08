@@ -158,3 +158,4 @@ cython_debug/
 *.db-journal
 *.db-wal
 *.db-shm
+releases/SQLiteManager_v1.0.0_Portable.zip

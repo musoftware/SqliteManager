@@ -245,7 +245,8 @@ class MainWindow(QMainWindow):
         # Welcome screen
         welcome = self._build_welcome()
         self._db_tabs.addTab(welcome, "Welcome")
-        self._db_tabs.tabBar().setTabButton(0, self._db_tabs.tabBar().RightSide, None)
+        from PySide6.QtWidgets import QTabBar
+        self._db_tabs.tabBar().setTabButton(0, QTabBar.ButtonPosition.RightSide, None)
 
         self.setCentralWidget(self._db_tabs)
 

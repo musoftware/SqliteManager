@@ -47,7 +47,6 @@ def main() -> int:
     app.setApplicationName(APP_NAME)
     app.setApplicationVersion(VERSION)
     app.setOrganizationName("SQLiteManager")
-    app.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
     app.setFont(QFont(DEFAULT_FONT_FAMILY, DEFAULT_FONT_SIZE))
 
     # Set application icon

@@ -27,6 +27,10 @@ sys.path.insert(0, str(ROOT))
 
 from app.version import VERSION, APP_NAME
 
+# ── Python resolver: prefer .venv (3.12) over system Python (may be 3.14) ────
+_VENV_PYTHON = ROOT / ".venv" / "Scripts" / "python.exe"
+PYTHON = str(_VENV_PYTHON) if _VENV_PYTHON.exists() else PYTHON
+
 DIST_DIR      = ROOT / "dist"
 BUILD_DIR     = ROOT / "build"
 RELEASES_DIR  = ROOT / "releases"
@@ -60,7 +64,7 @@ def check_tools() -> None:
     for tool in ["pyinstaller", "pip"]:
         if shutil.which(tool) is None:
             try:
-                subprocess.run([sys.executable, "-m", tool, "--version"],
+                subprocess.run([PYTHON, "-m", tool, "--version"],
                                capture_output=True, check=True)
             except Exception:
                 missing.append(tool)
@@ -70,7 +74,7 @@ def check_tools() -> None:
     if missing:
         print(f"\n  [WARN] Missing tools: {missing}")
         print("  Installing PyInstaller...")
-        run([sys.executable, "-m", "pip", "install", "pyinstaller", "--quiet"])
+        run([PYTHON, "-m", "pip", "install", "pyinstaller", "--quiet"])
 
 
 def clean(full: bool = False) -> None:
@@ -108,7 +112,7 @@ def build_pyinstaller(onefile: bool = False, debug: bool = False) -> Path:
     update_version_info()
 
     cmd = [
-        sys.executable, "-m", "PyInstaller",
+        PYTHON, "-m", "PyInstaller",
         str(SPEC_FILE),
         "--clean",
         "--noconfirm",
@@ -143,7 +147,7 @@ def build_pyinstaller(onefile: bool = False, debug: bool = False) -> Path:
 def build_nuitka() -> None:
     banner("Building with Nuitka (optimized)")
     cmd = [
-        sys.executable, "-m", "nuitka",
+        PYTHON, "-m", "nuitka",
         "--standalone",
         "--onefile",
         "--enable-plugin=pyside6",

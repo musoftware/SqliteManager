@@ -56,12 +56,13 @@ function Write-Info([string]$msg) { Write-Host "  $msg" -ForegroundColor Gray }
 # ── Checks ────────────────────────────────────────────────────────────────────
 Write-Banner "SQLite Manager Build System"
 
-# Python
+# Python — prefer .venv (Python 3.12) over system Python to avoid 3.14 bootloader issues
+$PYTHON = if (Test-Path ".venv\Scripts\python.exe") { ".venv\Scripts\python.exe" } else { "python" }
 try {
-    $pyVersion = & python --version 2>&1
-    Write-Ok "Python: $pyVersion"
+    $pyVersion = & $PYTHON --version 2>&1
+    Write-Ok "Python: $pyVersion  ($PYTHON)"
 } catch {
-    Write-Err "Python not found. Install Python 3.12+ and add to PATH."
+    Write-Err "Python not found. Create a .venv with Python 3.12: py -3.12 -m venv .venv"
     exit 1
 }
 

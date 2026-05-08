@@ -21,15 +21,17 @@ echo   SQLite Manager Build System
 echo  ============================================================
 echo.
 
-REM -- Python check
-where python >nul 2>&1
+REM -- Python check: prefer .venv (Python 3.12) to avoid 3.14 bootloader issues
+set PYTHON=python
+if exist ".venv\Scripts\python.exe" set PYTHON=.venv\Scripts\python.exe
+
+%PYTHON% --version >nul 2>&1
 if %ERRORLEVEL% NEQ 0 (
-    echo  [ERROR] Python not found in PATH.
-    echo  Please install Python 3.12+ and add it to PATH.
+    echo  [ERROR] Python not found. Create venv: py -3.12 -m venv .venv
     pause
     exit /b 1
 )
-for /f "tokens=*" %%v in ('python --version 2^>^&1') do echo  Python: %%v
+for /f "tokens=*" %%v in ('%PYTHON% --version 2^>^&1') do echo  Python: %%v
 
 REM -- Parse argument
 set "MODE=%~1"
