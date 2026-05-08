@@ -108,6 +108,9 @@ _CRITICAL_DLLS = [
     f"python{sys.version_info.major}{sys.version_info.minor}.dll",  # python312.dll
     "vcruntime140.dll",
     "vcruntime140_1.dll",
+    "Qt6Core.dll",
+    "Qt6Gui.dll",
+    "Qt6Widgets.dll",
 ]
 
 _IMPORTANT_DLLS = [
@@ -214,13 +217,17 @@ def _setup_qt_paths() -> None:
         else:
             _log(f"  WARNING: Qt plugins dir not found at {qt_plugins}")
 
-        # Add _MEIPASS to DLL search path
-        try:
-            os.add_dll_directory(meipass)
-            _log(f"  Added to DLL search: {meipass}")
-        except (AttributeError, OSError):
-            os.environ["PATH"] = meipass + os.pathsep + os.environ.get("PATH", "")
-            _log(f"  Prepended to PATH: {meipass}")
+        # Add _MEIPASS and subfolders to DLL search path
+        # os.add_dll_directory is NOT recursive.
+        for sub in ["", "PySide6", "shiboken6"]:
+            search_path = os.path.join(meipass, sub) if sub else meipass
+            if os.path.isdir(search_path):
+                try:
+                    os.add_dll_directory(search_path)
+                    _log(f"  Added to DLL search: {search_path}")
+                except (AttributeError, OSError):
+                    os.environ["PATH"] = search_path + os.pathsep + os.environ.get("PATH", "")
+                    _log(f"  Prepended to PATH: {search_path}")
 
 
 # ── Loaded modules report ─────────────────────────────────────────────────────

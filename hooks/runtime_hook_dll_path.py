@@ -31,6 +31,16 @@ if _meipass and os.name == "nt":
         except (AttributeError, OSError):
             os.environ["PATH"] = _exe_dir + os.pathsep + os.environ.get("PATH", "")
 
+    # Recursively add PySide6 and shiboken6 folders to DLL search path
+    # os.add_dll_directory is NOT recursive, so we must add subfolders explicitly.
+    for sub in ["PySide6", "shiboken6"]:
+        _sub_path = os.path.join(_meipass, sub)
+        if os.path.isdir(_sub_path):
+            try:
+                os.add_dll_directory(_sub_path)
+            except (AttributeError, OSError):
+                os.environ["PATH"] = _sub_path + os.pathsep + os.environ.get("PATH", "")
+
     # Set Qt plugin path so platform plugins (qwindows.dll) are found
     _qt_plugins = os.path.join(_meipass, "PySide6", "plugins")
     if os.path.isdir(_qt_plugins):

@@ -201,6 +201,9 @@ def _post_build_verify(dist_dir: Path) -> None:
         # (search_dir, dll_name, description)
         (_internal,                                             f"python{py_ver}.dll", "Python runtime"),
         (_internal,                                             "vcruntime140.dll",    "VC Runtime 140"),
+        (_internal / "PySide6",                                 "Qt6Core.dll",         "Qt6 Core"),
+        (_internal / "PySide6",                                 "Qt6Gui.dll",          "Qt6 GUI"),
+        (_internal / "PySide6",                                 "Qt6Widgets.dll",      "Qt6 Widgets"),
         (_internal / "PySide6" / "plugins" / "platforms",      "qwindows.dll",        "Qt Windows platform"),
         (_internal,                                             "python3.dll",         "Python3 stub DLL"),
     ]

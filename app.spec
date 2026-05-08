@@ -21,7 +21,8 @@ import sys
 import os
 import glob
 from pathlib import Path
-from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs, collect_all
+from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs, collect_all, get_package_paths
+import importlib.util
 
 # ── Paths ──────────────────────────────────────────────────────────────────────
 ROOT       = Path(SPECPATH)
@@ -43,6 +44,28 @@ pyside6_datas, pyside6_binaries, pyside6_hiddenimports = collect_all("PySide6")
 pandas_datas,  pandas_binaries,  pandas_hiddenimports  = collect_all("pandas")
 sqlalchemy_datas, sqlalchemy_binaries, sqlalchemy_hiddenimports = collect_all("sqlalchemy")
 openpyxl_datas, openpyxl_binaries, openpyxl_hiddenimports = collect_all("openpyxl")
+
+# ── Manual DLL Collection (Belt-and-suspenders) ──────────────────────────────
+# In some PySide6 versions, collect_all might miss the core DLLs or place them 
+# incorrectly. We manually collect them to be safe.
+def manual_collect_dlls(package_name):
+    pkg_binaries = []
+    try:
+        spec = importlib.util.find_spec(package_name)
+        if spec and spec.origin:
+            pkg_dir = Path(spec.origin).parent
+            # Collect all DLLs and PYDs in the package root
+            for ext in ["*.dll", "*.pyd"]:
+                for f in pkg_dir.glob(ext):
+                    # Destination is the package name (e.g. _internal/PySide6)
+                    pkg_binaries.append((str(f), package_name))
+            print(f"[spec] Manually collected {len(pkg_binaries)} binaries from {package_name}")
+    except Exception as e:
+        print(f"[spec] WARNING: Manual collection for {package_name} failed: {e}")
+    return pkg_binaries
+
+EXTRA_PYSIDE_BINARIES = manual_collect_dlls("PySide6")
+EXTRA_SHIBOKEN_BINARIES = manual_collect_dlls("shiboken6")
 
 # ── Additional hidden imports ──────────────────────────────────────────────────
 EXTRA_HIDDEN_IMPORTS = [
@@ -233,6 +256,8 @@ ALL_BINARIES = (
     + pandas_binaries
     + sqlalchemy_binaries
     + openpyxl_binaries
+    + EXTRA_PYSIDE_BINARIES
+    + EXTRA_SHIBOKEN_BINARIES
 )
 
 # ── Exclusions ────────────────────────────────────────────────────────────────
@@ -317,24 +342,15 @@ a = Analysis(
 # ── PYZ ────────────────────────────────────────────────────────────────────────
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
-# ── Splash (optional — falls back gracefully) ──────────────────────────────────
+# ── Splash ─────────────────────────────────────────────────────────────────────
+# PyInstaller's built-in Splash() requires Tcl/Tk (tcl86t.dll / tk86t.dll).
+# These DLLs are NOT present in this venv and cause a fatal LoadLibrary crash:
+#   "Failed to load Tcl DLL 'tcl86t.dll'. LoadLibrary: The specified module could not be found."
+#
+# The app already has its own Qt-based SplashScreen widget (widgets/splash_screen.py)
+# which works without Tcl/Tk. PyInstaller's built-in splash is permanently DISABLED.
 _splash_extras = []
-try:
-    if Path(SPLASH_IMG).exists():
-        splash = Splash(
-            SPLASH_IMG,
-            binaries=a.binaries,
-            datas=a.datas,
-            text_pos=None,
-            text_size=12,
-            minify_script=True,
-        )
-        _splash_extras = [splash]
-        print("[spec] Built-in splash screen: enabled")
-    else:
-        print(f"[spec] Splash image not found at {SPLASH_IMG}, using app's SplashScreen widget")
-except Exception as _splash_err:
-    print(f"[spec] Built-in splash not available ({_splash_err}), using app's SplashScreen widget")
+print("[spec] Built-in splash: DISABLED (using app's Qt SplashScreen widget instead)")
 
 # ── EXE ────────────────────────────────────────────────────────────────────────
 exe = EXE(
